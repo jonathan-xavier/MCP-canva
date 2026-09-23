@@ -1,0 +1,115 @@
+Contexto:
+  - Repositório: [CAMINHO OU NOME DO PROJETO]
+  - Aplicação/cliente MCP: [CODEX, CURSOR, VS CODE, APP NODE.JS ETC.]
+  - Linguagem preferida: TypeScript com Node.js
+  - Servidor MCP oficial: https://mcp.canva.com/mcp
+  - Documentação: https://www.canva.dev/docs/apps/mcp/
+
+  Objetivo:
+  O usuário deve conseguir escrever algo como:
+
+  "Crie um banner para Instagram divulgando uma promoção de 30%, usando azul
+  escuro, branco e amarelo. Formato 1080x1350, estilo moderno, com o texto
+  'Semana da Tecnologia' e CTA 'Compre agora'."
+
+  A aplicação deverá usar o Canva para gerar opções, apresentar as opções ao
+  usuário, criar o design escolhido e devolver o link editável do Canva.
+
+  Antes de implementar:
+  1. Inspecione a estrutura e as tecnologias existentes no projeto.
+  2. Consulte a documentação oficial atual do Canva MCP.
+  3. Não crie um servidor MCP intermediário se a conexão direta com o MCP oficial
+     atender ao caso.
+  4. Não invente endpoints, parâmetros, IDs ou respostas.
+  5. Explique resumidamente a arquitetura que será usada.
+
+  Implementação:
+  1. Configure a conexão Streamable HTTP com:
+     https://mcp.canva.com/mcp
+
+  2. Caso o cliente não aceite MCP remoto, configure o fallback com:
+     npx -y mcp-remote@latest https://mcp.canva.com/mcp
+
+  3. Implemente autenticação OAuth do Canva:
+     - Client ID e Client Secret em variáveis de ambiente.
+     - Redirect URL configurável.
+     - Nunca versionar tokens ou segredos.
+     - Cada usuário deve autenticar sua própria conta do Canva.
+
+  4. Descubra as ferramentas disponíveis usando listTools, sem manter uma lista
+     rígida baseada em suposições.
+
+  5. Implemente este fluxo de criação:
+     - Receber o briefing do banner.
+     - Chamar `generate-design`.
+     - Aguardar a conclusão do job assíncrono.
+     - Mostrar ao usuário todas as opções/candidatos gerados.
+     - Não escolher automaticamente uma opção.
+     - Após a escolha, chamar `create-design-from-candidate`.
+     - Retornar o link de edição do Canva.
+
+  6. Implemente edição de um design existente com o fluxo:
+     - `start-editing-transaction`
+     - `perform-editing-operations`
+     - `commit-editing-transaction`
+     Nunca informar que a alteração foi salva antes do commit.
+
+  7. Implemente exportação usando `export-design`, inicialmente para PNG, JPG
+     e PDF.
+
+  8. Trate adequadamente:
+     - timeout;
+     - falhas de OAuth;
+     - token expirado;
+     - permissão insuficiente;
+     - limites do plano do Canva;
+     - designs com elementos premium;
+     - jobs assíncronos;
+     - falhas de rede;
+     - respostas inválidas do MCP.
+
+  9. Para geração de design, use timeout de pelo menos 60 segundos.
+
+  Segurança:
+  - Criar `.env.example`, sem credenciais reais.
+  - Garantir que `.env` esteja no `.gitignore`.
+  - Não registrar access tokens, refresh tokens ou Client Secret nos logs.
+  - Validar os argumentos antes de chamar as ferramentas.
+  - Aplicar privilégio mínimo às permissões.
+
+  Entregáveis:
+  - Integração funcional.
+  - Código organizado e tipado.
+  - `.env.example`.
+  - Instruções no README para criar e configurar o app no Canva Developer Portal.
+  - Instruções para autenticar e testar a conexão.
+  - Testes unitários com respostas MCP simuladas.
+  - Um teste manual do fluxo:
+    conectar → gerar opções → escolher → criar → editar → exportar.
+  - Relação dos arquivos criados ou alterados.
+
+  Critérios de aceite:
+  - O cliente consegue listar as ferramentas do Canva.
+  - O login OAuth funciona.
+  - Um briefing gera opções de banners.
+  - O usuário escolhe uma opção antes da criação definitiva.
+  - O resultado inclui um link editável do Canva.
+  - O banner pode ser exportado em PNG.
+  - Nenhuma credencial aparece no repositório ou nos logs.
+Crie no Canva um banner com estas especificações:
+
+Objetivo: [promoção, lançamento, evento ou campanha]
+Canal: Instagram
+Formato: 1080 x 1350 px, orientação vertical
+Público: [descreva o público]
+Título principal: "[texto]"
+Texto secundário: "[texto]"
+Chamada para ação: "[CTA]"
+Cores: [paleta de cores]
+Estilo: [moderno, minimalista, elegante, vibrante etc.]
+Imagem principal: [descrição da imagem]
+Marca: [nome e regras visuais]
+
+Priorize hierarquia visual, contraste e legibilidade em tela pequena.
+Não use marcas, logotipos ou personagens sem autorização.
+Gere opções visualmente diferentes para eu escolher.

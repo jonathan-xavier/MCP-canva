@@ -1,0 +1,38 @@
+{
+  "name": "canva-banner-mcp-client",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Cliente CLI para criar, editar e exportar banners usando o MCP oficial do Canva.",
+  "engines": {
+    "node": ">=22.7.5"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test 'dist/test/**/*.test.js'",
+    "web:build": "npm --prefix web run build",
+    "prelocal": "npm run build",
+    "local": "concurrently --kill-others --names API,WEB --prefix-colors cyan,magenta \"node dist/src/http/server.js\" \"TMPDIR=/tmp npm --prefix web run dev\"",
+    "pretools": "npm run build",
+    "tools": "node dist/src/cli.js tools",
+    "prebanner": "npm run build",
+    "banner": "node dist/src/cli.js banner",
+    "preexport": "npm run build",
+    "export": "node dist/src/cli.js export",
+    "preedit": "npm run build",
+    "edit": "node dist/src/cli.js edit",
+    "precall": "npm run build",
+    "call": "node dist/src/cli.js call"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/client": "^2.0.0",
+    "fastify": "^5.6.1",
+    "mcp-remote": "^0.14.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "concurrently": "^9.2.1",
+    "typescript": "^6.0.0"
+  }
+}
