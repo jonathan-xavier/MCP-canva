@@ -1,6 +1,6 @@
 # Implementação — Posts com vídeo no front local do Canva
 
-- **Status:** Planejada
+- **Status:** Parcialmente implementada
 - **Data:** 23 de setembro de 2026
 - **Projeto:** `MCP-canva`
 - **Dependência:** `TECHSPEC-front-local-canva.md`
@@ -23,9 +23,22 @@ O MVP atual já consegue:
 - consultar os formatos de exportação;
 - exportar em MP4 quando o Canva anunciar esse formato para o design.
 
-O MVP ainda não envia vídeos para o Canva nem os insere automaticamente no
-design. Informar apenas no briefing que o post deve ter vídeo não garante que o
-Canva produzirá um design com o vídeo desejado.
+O front local agora aceita uma URL pública HTTPS para uma imagem e outra para um
+vídeo, permite escolher divisão vertical ou horizontal e configurar a
+porcentagem ocupada pela imagem. O valor inicial é 30% para a imagem e 70% para
+o vídeo. O backend importa as duas mídias com `upload-asset-from-url` e envia os
+`asset_ids`, nessa ordem, para `generate-design`.
+
+Também é possível anexar arquivos locais diretamente no formulário. A API local
+aceita imagem de até 20 MB e vídeo de até 100 MB, solicita ao Canva uma URL de
+upload de uso único com `create-upload-url` e envia os bytes sem persistir os
+arquivos no projeto. O usuário pode alternar entre **Anexar arquivos** e **Usar
+URLs**.
+
+A composição percentual é enviada como requisito prioritário no briefing. A
+etapa posterior de reposicionar e redimensionar os elementos por transação de
+edição, com prévia e aprovação explícita, continua planejada. Até essa etapa ser
+implementada, a divisão 30/70 ainda depende da composição gerada pelo Canva.
 
 ## 3. Escopo da implementação
 

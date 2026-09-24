@@ -16,6 +16,15 @@ export interface GenerationResponse {
   candidates: Candidate[];
 }
 
+export interface MediaGenerationInput {
+  imageUrl?: string;
+  videoUrl?: string;
+  imageAssetId?: string;
+  videoAssetId?: string;
+  imagePercent: number;
+  orientation: 'vertical' | 'horizontal';
+}
+
 export interface Design {
   id: string;
   title?: string;
@@ -26,6 +35,12 @@ export interface Design {
 export interface SelectionResponse {
   design: Design;
   exportFormats: string[];
+  instructionCheck?: InstructionCheck;
+}
+
+export interface InstructionCheck {
+  status: 'verified' | 'missing' | 'unavailable';
+  items: Array<{ text: string; found: boolean }>;
 }
 
 export interface ExportResponse {

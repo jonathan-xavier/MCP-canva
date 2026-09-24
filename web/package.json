@@ -10,7 +10,10 @@
     "build": "vinext build",
     "start": "vinext start",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
-    "test": "TMPDIR=/tmp vitest run"
+    "test": "TMPDIR=/tmp vitest run",
+    "typecheck": "tsc --noEmit",
+    "check:palette": "node scripts/check-ui-palette.mjs",
+    "check": "npm run typecheck && npm run lint && npm test && npm run check:palette && npm run build"
   },
   "dependencies": {
     "next": "^16.3.6",

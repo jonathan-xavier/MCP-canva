@@ -1,4 +1,4 @@
-import type { ApiErrorBody, Capabilities, ExportResponse, GenerationResponse, SelectionResponse } from './types';
+import type { ApiErrorBody, Capabilities, ExportResponse, GenerationResponse, MediaGenerationInput, SelectionResponse } from './types';
 
 export class ApiRequestError extends Error {
   constructor(
@@ -33,10 +33,22 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const canvaApi = {
   capabilities: (): Promise<Capabilities> => request('/api/canva/capabilities'),
-  generate: (brief: string, designType: string): Promise<GenerationResponse> =>
+  uploadMedia: async (file: File, kind: 'image' | 'video'): Promise<{ assetId: string; kind: string }> => {
+    const response = await fetch(`/api/media-uploads?kind=${kind}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream', 'X-File-Type': file.type },
+      body: file,
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({})) as ApiErrorBody;
+      throw new ApiRequestError(body.error?.message ?? 'Não foi possível enviar o arquivo ao Canva.', body.error?.code, body.error?.retryable);
+    }
+    return response.json() as Promise<{ assetId: string; kind: string }>;
+  },
+  generate: (brief: string, designType: string, exactTexts: string[] = [], media?: MediaGenerationInput): Promise<GenerationResponse> =>
     request('/api/generations', {
       method: 'POST',
-      body: JSON.stringify({ brief, designType }),
+      body: JSON.stringify({ brief, designType, exactTexts, ...(media ? { media } : {}) }),
     }),
   select: (generationId: string, candidateId: string): Promise<SelectionResponse> =>
     request(`/api/generations/${encodeURIComponent(generationId)}/selection`, {

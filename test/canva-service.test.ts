@@ -5,10 +5,31 @@ import type { JsonObject, McpPort, McpTool, McpToolResult } from '../src/types.j
 
 const tools: McpTool[] = [
   {
+    name: 'create-upload-url',
+    inputSchema: {
+      type: 'object',
+      properties: { user_intent: { type: 'string' } },
+      required: [],
+    },
+  },
+  {
+    name: 'upload-asset-from-url',
+    inputSchema: {
+      type: 'object',
+      properties: { url: { type: 'string' }, name: { type: 'string' }, user_intent: { type: 'string' } },
+      required: ['url', 'name'],
+    },
+  },
+  {
     name: 'generate-design',
     inputSchema: {
       type: 'object',
-      properties: { query: { type: 'string' }, design_type: { type: 'string' }, user_intent: { type: 'string' } },
+      properties: {
+        query: { type: 'string' },
+        design_type: { type: 'string' },
+        asset_ids: { type: 'array' },
+        user_intent: { type: 'string' },
+      },
       required: ['query', 'design_type'],
     },
   },
@@ -26,6 +47,18 @@ const tools: McpTool[] = [
       type: 'object',
       properties: { design_id: { type: 'string' }, user_intent: { type: 'string' } },
       required: ['design_id'],
+    },
+  },
+  {
+    name: 'get-design-content',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        design_id: { type: 'string' },
+        content_types: { type: 'array' },
+        user_intent: { type: 'string' },
+      },
+      required: ['design_id', 'content_types'],
     },
   },
   {
@@ -128,7 +161,7 @@ test('fluxo de geração preserva job e exige criação do candidato escolhido',
   });
   const service = new CanvaService(mcp);
 
-  const generated = await service.generateCandidates('Promoção de tecnologia');
+  const generated = await service.generateCandidates('Promoção de tecnologia', 'instagram_post', ['asset-image', 'asset-video']);
   assert.equal(generated.jobId, 'job-1');
   assert.equal(generated.candidates.length, 2);
   assert.deepEqual(mcp.calls[0], {
@@ -136,6 +169,7 @@ test('fluxo de geração preserva job e exige criação do candidato escolhido',
     args: {
       query: 'Promoção de tecnologia',
       design_type: 'instagram_post',
+      asset_ids: ['asset-image', 'asset-video'],
       user_intent: 'Gerar opções de banner no formato instagram_post.',
     },
   });
@@ -150,6 +184,47 @@ test('fluxo de geração preserva job e exige criação do candidato escolhido',
       candidate_id: 'candidate-2',
       user_intent: 'Criar o design editável escolhido pelo usuário.',
     },
+  });
+});
+
+test('upload de mídia retorna o asset_id anunciado pelo Canva', async () => {
+  const mcp = new FakeMcp({
+    'upload-asset-from-url': { structuredContent: { job: { status: 'success', asset_id: 'asset-1' } } },
+  });
+
+  const assetId = await new CanvaService(mcp).uploadAsset('https://cdn.test/image.jpg', 'Imagem da composição');
+
+  assert.equal(assetId, 'asset-1');
+  assert.deepEqual(mcp.calls[0], {
+    name: 'upload-asset-from-url',
+    args: {
+      url: 'https://cdn.test/image.jpg',
+      name: 'Imagem da composição',
+      user_intent: 'Importar Imagem da composição para usar no design solicitado.',
+    },
+  });
+});
+
+test('anexo local usa URL temporária e envia bytes brutos ao Canva', async () => {
+  const mcp = new FakeMcp({
+    'create-upload-url': { structuredContent: { upload_url: 'https://upload.canva.test/once' } },
+  });
+  const fetcher = async (_input: string | URL | Request, init?: RequestInit) => {
+    assert.equal(init?.method, 'POST');
+    assert.deepEqual(init?.headers, { 'Content-Type': 'application/octet-stream' });
+    assert.deepEqual(Buffer.from(init?.body as Uint8Array), Buffer.from('arquivo'));
+    return new Response(JSON.stringify({ resource: { asset_id: 'asset-local' } }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const assetId = await new CanvaService(mcp, fetcher).uploadLocalAsset(Buffer.from('arquivo'));
+
+  assert.equal(assetId, 'asset-local');
+  assert.deepEqual(mcp.calls[0], {
+    name: 'create-upload-url',
+    args: { user_intent: 'Enviar um arquivo local anexado pelo usuário para o Canva.' },
   });
 });
 
@@ -178,6 +253,28 @@ test('exportação retorna links temporários', async () => {
       design_id: 'design-1',
       format: { type: 'png' },
       user_intent: 'Exportar o design como png.',
+    },
+  });
+});
+
+test('leitura do design reúne os textos para validar instruções obrigatórias', async () => {
+  const mcp = new FakeMcp({
+    'get-design-content': {
+      structuredContent: {
+        pages: [{ richtexts: [{ regions: [{ text: 'SEMANA DA ' }, { text: 'TECNOLOGIA' }] }, { text: 'COMPRE AGORA' }] }],
+      },
+    },
+  });
+
+  const content = await new CanvaService(mcp).getDesignText('D1234567890');
+
+  assert.equal(content, 'SEMANA DA \nTECNOLOGIA\nCOMPRE AGORA');
+  assert.deepEqual(mcp.calls[0], {
+    name: 'get-design-content',
+    args: {
+      design_id: 'D1234567890',
+      content_types: ['richtexts'],
+      user_intent: 'Verificar se os textos obrigatórios aparecem no design criado.',
     },
   });
 });

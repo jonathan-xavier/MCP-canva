@@ -7,8 +7,11 @@ import { GenerationStore } from './generation-store.js';
 
 export interface CanvaWebService {
   capabilities(): Promise<CanvaCapabilities>;
-  generateCandidates(brief: string, designType?: string): Promise<GeneratedCandidates>;
+  uploadAsset(url: string, name: string): Promise<string>;
+  uploadLocalAsset(bytes: Uint8Array): Promise<string>;
+  generateCandidates(brief: string, designType?: string, assetIds?: string[]): Promise<GeneratedCandidates>;
   createFromCandidate(jobId: string, candidateId: string): Promise<CreatedDesign>;
+  getDesignText(designId: string): Promise<string>;
   getExportFormats(designId: string): Promise<string[]>;
   exportDesign(designId: string, format: string): Promise<ExportedDesign>;
 }
@@ -53,6 +56,36 @@ function candidateResponse(generationId: string, candidate: GeneratedCandidates[
   };
 }
 
+function normalizeDesignText(value: string): string {
+  return value.normalize('NFC').replace(/\s+/g, ' ').trim();
+}
+
+interface MediaInput {
+  imageUrl?: string;
+  videoUrl?: string;
+  imageAssetId?: string;
+  videoAssetId?: string;
+  imagePercent?: number;
+  orientation?: string;
+}
+
+function publicHttpsUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.username || url.password) return false;
+    const hostname = url.hostname.toLowerCase();
+    return hostname !== 'localhost'
+      && hostname !== '::1'
+      && !hostname.endsWith('.local')
+      && !/^127\./.test(hostname)
+      && !/^10\./.test(hostname)
+      && !/^192\.168\./.test(hostname)
+      && !/^172\.(1[6-9]|2\d|3[01])\./.test(hostname);
+  } catch {
+    return false;
+  }
+}
+
 export function createApp(options: CreateAppOptions = {}): FastifyInstance {
   const manager = options.getService ? undefined : new CanvaConnectionManager();
   const getService = options.getService ?? (() => manager!.getService() as Promise<CanvaService>);
@@ -62,6 +95,7 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     bodyLimit: 16 * 1024,
     requestTimeout: 150_000,
   });
+  app.addContentTypeParser('application/octet-stream', { parseAs: 'buffer' }, (_request, body, done) => done(null, body));
 
   app.get('/api/health', async () => ({ status: 'ok', version: '1.0.0' }));
 
@@ -70,7 +104,32 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     return service.capabilities();
   });
 
-  app.post<{ Body: { brief?: string; designType?: string } }>('/api/generations', async (request, reply) => {
+  app.post<{ Querystring: { kind?: string }; Body: Buffer }>(
+    '/api/media-uploads',
+    { config: { rawBody: true }, bodyLimit: 100 * 1024 * 1024 },
+    async (request, reply) => {
+      const kind = request.query.kind;
+      if (kind !== 'image' && kind !== 'video') {
+        throw new ApiError('VALIDATION_ERROR', 400, 'Escolha image ou video para o anexo.');
+      }
+      if (!Buffer.isBuffer(request.body) || request.body.length === 0) {
+        throw new ApiError('VALIDATION_ERROR', 400, 'O arquivo anexado está vazio.');
+      }
+      const fileType = request.headers['x-file-type'];
+      if (typeof fileType !== 'string' || !fileType.toLowerCase().startsWith(`${kind}/`)) {
+        throw new ApiError('VALIDATION_ERROR', 400, kind === 'image' ? 'Anexe um arquivo de imagem válido.' : 'Anexe um arquivo de vídeo válido.');
+      }
+      const maximum = kind === 'image' ? 20 * 1024 * 1024 : 100 * 1024 * 1024;
+      if (request.body.length > maximum) {
+        throw new ApiError('VALIDATION_ERROR', 413, kind === 'image' ? 'A imagem deve ter no máximo 20 MB.' : 'O vídeo deve ter no máximo 100 MB.');
+      }
+      const service = await getService();
+      const assetId = await service.uploadLocalAsset(request.body);
+      return reply.code(201).send({ assetId, kind });
+    },
+  );
+
+  app.post<{ Body: { brief?: string; designType?: string; exactTexts?: unknown; media?: MediaInput } }>('/api/generations', async (request, reply) => {
     const brief = request.body?.brief?.trim() ?? '';
     const designType = request.body?.designType?.trim() ?? '';
     if (brief.length < 10 || brief.length > 5_000) {
@@ -79,14 +138,46 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     if (!/^[a-z][a-z0-9_]{1,49}$/.test(designType)) {
       throw new ApiError('VALIDATION_ERROR', 400, 'Escolha um formato válido.');
     }
+    const rawExactTexts = request.body?.exactTexts ?? [];
+    if (!Array.isArray(rawExactTexts) || rawExactTexts.length > 3 || rawExactTexts.some(
+      (item) => typeof item !== 'string' || item.trim().length === 0 || item.length > 240,
+    )) {
+      throw new ApiError('VALIDATION_ERROR', 400, 'Os textos exatos informados são inválidos.');
+    }
+    const exactTexts = rawExactTexts.map((item) => (item as string).trim());
+    const media = request.body?.media;
+    const assetIdPattern = /^[a-zA-Z0-9_-]{1,80}$/;
+    const usesUploadedAssets = Boolean(media?.imageAssetId || media?.videoAssetId);
+    if (media && (
+      (usesUploadedAssets
+        ? !assetIdPattern.test(media.imageAssetId ?? '') || !assetIdPattern.test(media.videoAssetId ?? '')
+        : typeof media.imageUrl !== 'string'
+          || typeof media.videoUrl !== 'string'
+          || !publicHttpsUrl(media.imageUrl)
+          || !publicHttpsUrl(media.videoUrl))
+      || !Number.isInteger(media.imagePercent)
+      || media.imagePercent! < 10
+      || media.imagePercent! > 90
+      || !['vertical', 'horizontal'].includes(media.orientation ?? '')
+    )) {
+      throw new ApiError('VALIDATION_ERROR', 400, 'Informe URLs públicas HTTPS e uma divisão válida para imagem e vídeo.');
+    }
 
     const service = await getService();
     const capabilities = await service.capabilities();
     if (capabilities.designTypes.length > 0 && !capabilities.designTypes.includes(designType)) {
       throw new ApiError('VALIDATION_ERROR', 400, 'Esse formato não é aceito pela conexão atual do Canva.');
     }
-    const generated = await service.generateCandidates(brief, designType);
-    store.put(generated);
+    const assetIds = media
+      ? usesUploadedAssets
+        ? [media.imageAssetId!, media.videoAssetId!]
+        : [
+            await service.uploadAsset(media.imageUrl!, 'Imagem da composição'),
+            await service.uploadAsset(media.videoUrl!, 'Vídeo da composição'),
+          ]
+      : [];
+    const generated = await service.generateCandidates(brief, designType, assetIds);
+    store.put(generated, exactTexts);
     return reply.code(201).send({
       generationId: generated.jobId,
       candidates: generated.candidates.map((candidate) => candidateResponse(generated.jobId, candidate)),
@@ -114,12 +205,32 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
       const generationId = ensureIdentifier(request.params.generationId, generationIdPattern, 'Geração');
       const candidateId = ensureIdentifier(request.body?.candidateId ?? '', candidateIdPattern, 'Candidato');
       store.claimSelection(generationId, candidateId);
+      const exactTexts = store.get(generationId).exactTexts;
       try {
         const service = await getService();
         const design = await service.createFromCandidate(generationId, candidateId);
         store.markSelected(generationId, candidateId, design.id);
         const exportFormats = await service.getExportFormats(design.id).catch(() => []);
-        return reply.code(201).send({ design, exportFormats });
+        let instructionCheck;
+        if (exactTexts.length > 0) {
+          try {
+            const designText = normalizeDesignText(await service.getDesignText(design.id));
+            const items = exactTexts.map((text) => ({
+              text,
+              found: designText.includes(normalizeDesignText(text)),
+            }));
+            instructionCheck = {
+              status: items.every((item) => item.found) ? 'verified' : 'missing',
+              items,
+            } as const;
+          } catch {
+            instructionCheck = {
+              status: 'unavailable',
+              items: exactTexts.map((text) => ({ text, found: false })),
+            } as const;
+          }
+        }
+        return reply.code(201).send({ design, exportFormats, ...(instructionCheck ? { instructionCheck } : {}) });
       } catch (error) {
         store.releaseSelection(generationId);
         throw error;

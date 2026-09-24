@@ -37,4 +37,19 @@ describe('CandidateCard', () => {
     expect(screen.getByRole('button', { name: 'Usar este design' })).toBeDisabled();
     expect(screen.getByLabelText('Prévia indisponível para a opção 1')).toBeVisible();
   });
+
+  it('identifica textualmente o candidato que está sendo criado', () => {
+    render(
+      <CandidateCard
+        candidate={{ candidateId: 'candidate_1', previewUrls: [] }}
+        index={0}
+        disabled
+        isCreating
+        onSelect={() => undefined}
+      />,
+    );
+
+    expect(screen.getByRole('article')).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('button', { name: 'Criando design' })).toBeDisabled();
+  });
 });

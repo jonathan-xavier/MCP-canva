@@ -23,6 +23,10 @@ const aliases = {
   operations: ['operations', 'edits', 'changes'],
   pageIndex: ['page_index', 'pageIndex'],
   pages: ['pages'],
+  contentTypes: ['content_types', 'contentTypes'],
+  assetIds: ['asset_ids', 'assetIds'],
+  url: ['url'],
+  name: ['name'],
   userIntent: ['user_intent', 'userIntent'],
 } as const;
 
@@ -44,7 +48,10 @@ function advertisedFormats(payload: JsonObject): string[] {
 export class CanvaService {
   private tools?: McpTool[];
 
-  constructor(private readonly mcp: McpPort) {}
+  constructor(
+    private readonly mcp: McpPort,
+    private readonly fetcher: typeof fetch = fetch,
+  ) {}
 
   async listTools(refresh = false): Promise<McpTool[]> {
     if (!this.tools || refresh) {
@@ -82,7 +89,68 @@ export class CanvaService {
     };
   }
 
-  async generateCandidates(brief: string, designType = 'instagram_post'): Promise<GeneratedCandidates> {
+  async uploadAsset(url: string, name: string): Promise<string> {
+    const tool = await this.tool('upload-asset-from-url');
+    const args = resolveArguments(tool, [
+      { aliases: aliases.url, value: url, label: 'URL do arquivo' },
+      { aliases: aliases.name, value: name, label: 'nome do arquivo' },
+      { aliases: aliases.userIntent, value: `Importar ${name} para usar no design solicitado.`, label: 'intenção do usuário' },
+    ]);
+    const payload = resultPayload(await this.mcp.callTool(tool.name, args));
+    const job = isRecord(payload.job) ? payload.job : payload;
+    const status = optionalString(job, 'status');
+    if (status && status !== 'success') {
+      const error = isRecord(job.error) ? optionalString(job.error, 'message') : undefined;
+      throw new Error(error ?? `O upload do Canva terminou com status "${status}".`);
+    }
+    const asset = isRecord(job.asset) ? job.asset : isRecord(job.media) ? job.media : job;
+    return optionalString(job, 'asset_id')
+      ?? optionalString(job, 'media_id')
+      ?? optionalString(asset, 'id')
+      ?? requiredString(asset, 'asset_id', 'upload de mídia');
+  }
+
+  async uploadLocalAsset(bytes: Uint8Array): Promise<string> {
+    const tool = await this.tool('create-upload-url');
+    const args = resolveArguments(tool, [
+      { aliases: aliases.userIntent, value: 'Enviar um arquivo local anexado pelo usuário para o Canva.', label: 'intenção do usuário' },
+    ]);
+    const payload = resultPayload(await this.mcp.callTool(tool.name, args));
+    const findString = (value: unknown, keys: Set<string>): string | undefined => {
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          const found = findString(item, keys);
+          if (found) return found;
+        }
+      } else if (isRecord(value)) {
+        for (const [key, child] of Object.entries(value)) {
+          if (keys.has(key) && typeof child === 'string' && child) return child;
+          const found = findString(child, keys);
+          if (found) return found;
+        }
+      }
+      return undefined;
+    };
+    const uploadUrl = findString(payload, new Set(['upload_url', 'uploadUrl', 'url']));
+    if (!uploadUrl) throw new Error('O Canva não retornou uma URL temporária para o upload.');
+    const parsedUrl = new URL(uploadUrl);
+    if (parsedUrl.protocol !== 'https:' || parsedUrl.username || parsedUrl.password) {
+      throw new Error('O Canva retornou uma URL de upload inválida.');
+    }
+
+    const response = await this.fetcher(uploadUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: new Uint8Array(bytes).buffer,
+    });
+    if (!response.ok) throw new Error(`O Canva recusou o anexo com status ${response.status}.`);
+    const uploaded = await response.json() as unknown;
+    const assetId = findString(uploaded, new Set(['asset_id', 'assetId', 'media_id', 'mediaId', 'resource_id', 'resourceId', 'id']));
+    if (!assetId) throw new Error('O Canva recebeu o arquivo, mas não retornou o identificador da mídia.');
+    return assetId;
+  }
+
+  async generateCandidates(brief: string, designType = 'instagram_post', assetIds: string[] = []): Promise<GeneratedCandidates> {
     if (!brief.trim()) throw new Error('O briefing do banner não pode ficar vazio.');
     const tools = await this.listTools();
     if (tools.some((item) => item.name === 'create-design')) {
@@ -95,6 +163,7 @@ export class CanvaService {
     const args = resolveArguments(tool, [
       { aliases: aliases.brief, value: brief.trim(), label: 'briefing' },
       { aliases: aliases.designType, value: designType, label: 'tipo de design' },
+      { aliases: aliases.assetIds, value: assetIds.length > 0 ? assetIds : undefined, label: 'mídias do design' },
       { aliases: aliases.userIntent, value: `Gerar opções de banner no formato ${designType}.`, label: 'intenção do usuário' },
     ]);
     let payload = resultPayload(await this.mcp.callTool(tool.name, args));
@@ -168,6 +237,32 @@ export class CanvaService {
     ]);
     const formatsPayload = resultPayload(await this.mcp.callTool(formatsTool.name, formatsArgs));
     return advertisedFormats(formatsPayload).sort();
+  }
+
+  async getDesignText(designId: string): Promise<string> {
+    const tool = await this.tool('get-design-content');
+    const args = resolveArguments(tool, [
+      { aliases: aliases.designId, value: designId, label: 'design' },
+      { aliases: aliases.contentTypes, value: ['richtexts'], label: 'tipos de conteúdo' },
+      { aliases: aliases.userIntent, value: 'Verificar se os textos obrigatórios aparecem no design criado.', label: 'intenção do usuário' },
+    ]);
+    const payload = resultPayload(await this.mcp.callTool(tool.name, args));
+    const texts: string[] = [];
+    const visit = (value: unknown, key?: string): void => {
+      if (key === 'text' && typeof value === 'string') {
+        texts.push(value);
+        return;
+      }
+      if (Array.isArray(value)) {
+        value.forEach((item) => visit(item));
+        return;
+      }
+      if (isRecord(value)) {
+        Object.entries(value).forEach(([childKey, child]) => visit(child, childKey));
+      }
+    };
+    visit(payload);
+    return texts.join('\n');
   }
 
   async exportDesign(designId: string, format: string): Promise<ExportedDesign> {

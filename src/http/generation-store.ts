@@ -6,6 +6,7 @@ export interface GenerationRecord {
   createdAt: number;
   expiresAt: number;
   candidates: DesignCandidate[];
+  exactTexts: string[];
   selectedCandidateId?: string;
   designId?: string;
   selectionInProgress?: boolean;
@@ -29,7 +30,7 @@ export class GenerationStore {
     this.now = options.now ?? Date.now;
   }
 
-  put(generated: GeneratedCandidates): GenerationRecord {
+  put(generated: GeneratedCandidates, exactTexts: string[] = []): GenerationRecord {
     this.cleanup();
     while (this.records.size >= this.maxRecords) {
       const oldest = [...this.records.values()].sort((a, b) => a.createdAt - b.createdAt)[0];
@@ -46,6 +47,7 @@ export class GenerationStore {
         ...candidate,
         thumbnailUrls: [...candidate.thumbnailUrls],
       })),
+      exactTexts: [...exactTexts],
     };
     this.records.set(record.generationId, record);
     return record;

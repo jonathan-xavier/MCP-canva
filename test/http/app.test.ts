@@ -7,6 +7,12 @@ function fakeService(): CanvaWebService {
     async capabilities() {
       return { connected: true, generationTool: 'generate-design', designTypes: ['instagram_post'], canExport: true };
     },
+    async uploadAsset(_url, name) {
+      return name.startsWith('Imagem') ? 'asset_image' : 'asset_video';
+    },
+    async uploadLocalAsset() {
+      return 'asset_local';
+    },
     async generateCandidates() {
       return {
         jobId: 'job_1',
@@ -20,6 +26,9 @@ function fakeService(): CanvaWebService {
     },
     async createFromCandidate() {
       return { id: 'D1234567890', title: 'Campanha', editUrl: 'https://www.canva.com/design/edit', raw: {} };
+    },
+    async getDesignText() {
+      return 'SEMANA DA TECNOLOGIA\n30% DE DESCONTO\nCOMPRE AGORA';
     },
     async getExportFormats() {
       return ['png', 'pdf'];
@@ -43,7 +52,11 @@ test('API executa geração, escolha explícita e exportação sem expor URLs ar
   const generated = await app.inject({
     method: 'POST',
     url: '/api/generations',
-    payload: { brief: 'Campanha de tecnologia moderna', designType: 'instagram_post' },
+    payload: {
+      brief: 'Campanha de tecnologia moderna',
+      designType: 'instagram_post',
+      exactTexts: ['SEMANA DA TECNOLOGIA', 'COMPRE AGORA'],
+    },
   });
   assert.equal(generated.statusCode, 201);
   const generationBody = generated.json();
@@ -68,6 +81,13 @@ test('API executa geração, escolha explícita e exportação sem expor URLs ar
   });
   assert.equal(selected.statusCode, 201);
   assert.deepEqual(selected.json().exportFormats, ['png', 'pdf']);
+  assert.deepEqual(selected.json().instructionCheck, {
+    status: 'verified',
+    items: [
+      { text: 'SEMANA DA TECNOLOGIA', found: true },
+      { text: 'COMPRE AGORA', found: true },
+    ],
+  });
 
   const duplicate = await app.inject({
     method: 'POST',
@@ -98,6 +118,13 @@ test('API valida entrada e sanitiza erros internos do Canva', async (t) => {
   });
   assert.equal(invalid.statusCode, 400);
 
+  const invalidExactTexts = await app.inject({
+    method: 'POST',
+    url: '/api/generations',
+    payload: { brief: 'Briefing válido para testar textos', designType: 'instagram_post', exactTexts: [''] },
+  });
+  assert.equal(invalidExactTexts.statusCode, 400);
+
   const failed = await app.inject({
     method: 'POST',
     url: '/api/generations',
@@ -106,4 +133,65 @@ test('API valida entrada e sanitiza erros internos do Canva', async (t) => {
   assert.equal(failed.statusCode, 502);
   assert.equal(failed.body.includes('token-secreto'), false);
   assert.equal(failed.json().error.code, 'CANVA_TOOL_ERROR');
+});
+
+test('API importa imagem e vídeo na ordem e envia os assets para a geração', async (t) => {
+  const service = fakeService();
+  const uploads: string[] = [];
+  let generatedAssetIds: string[] | undefined;
+  service.uploadAsset = async (url) => {
+    uploads.push(url);
+    return url.endsWith('.jpg') ? 'asset_image' : 'asset_video';
+  };
+  service.generateCandidates = async (_brief, _designType, assetIds) => {
+    generatedAssetIds = assetIds;
+    return {
+      jobId: 'job_media',
+      candidates: [{ candidateId: 'candidate_media', thumbnailUrls: [] }],
+      raw: {},
+    };
+  };
+  const app = createApp({ getService: async () => service });
+  t.after(() => app.close());
+
+  const response = await app.inject({
+    method: 'POST',
+    url: '/api/generations',
+    payload: {
+      brief: 'Crie um post usando obrigatoriamente as duas mídias fornecidas.',
+      designType: 'instagram_post',
+      media: {
+        imageUrl: 'https://cdn.test/image.jpg',
+        videoUrl: 'https://cdn.test/video.mp4',
+        imagePercent: 30,
+        orientation: 'vertical',
+      },
+    },
+  });
+
+  assert.equal(response.statusCode, 201);
+  assert.deepEqual(uploads, ['https://cdn.test/image.jpg', 'https://cdn.test/video.mp4']);
+  assert.deepEqual(generatedAssetIds, ['asset_image', 'asset_video']);
+});
+
+test('API recebe anexo binário e devolve o asset do Canva', async (t) => {
+  const service = fakeService();
+  let receivedSize = 0;
+  service.uploadLocalAsset = async (bytes) => {
+    receivedSize = bytes.byteLength;
+    return 'asset_attachment';
+  };
+  const app = createApp({ getService: async () => service });
+  t.after(() => app.close());
+
+  const response = await app.inject({
+    method: 'POST',
+    url: '/api/media-uploads?kind=video',
+    headers: { 'content-type': 'application/octet-stream', 'x-file-type': 'video/mp4' },
+    payload: Buffer.from('video-bytes'),
+  });
+
+  assert.equal(response.statusCode, 201);
+  assert.equal(receivedSize, 11);
+  assert.deepEqual(response.json(), { assetId: 'asset_attachment', kind: 'video' });
 });

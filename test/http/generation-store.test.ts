@@ -13,9 +13,10 @@ function generation(jobId: string, candidateId = `${jobId}_candidate`) {
 test('GenerationStore expira registros e rejeita candidatos de outra geração', () => {
   let now = 1_000;
   const store = new GenerationStore({ ttlMs: 100, now: () => now });
-  store.put(generation('job_1', 'candidate_1'));
+  store.put(generation('job_1', 'candidate_1'), ['TEXTO EXATO']);
 
   assert.equal(store.getCandidate('job_1', 'candidate_1').candidateId, 'candidate_1');
+  assert.deepEqual(store.get('job_1').exactTexts, ['TEXTO EXATO']);
   assert.throws(() => store.getCandidate('job_1', 'candidate_2'), /não pertence/);
   now = 1_101;
   assert.throws(() => store.get('job_1'), /expirou/);

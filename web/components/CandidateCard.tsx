@@ -7,15 +7,16 @@ interface CandidateCardProps {
   candidate: Candidate;
   index: number;
   disabled: boolean;
+  isCreating?: boolean;
   onSelect: (candidateId: string) => void;
 }
 
-export function CandidateCard({ candidate, index, disabled, onSelect }: CandidateCardProps) {
+export function CandidateCard({ candidate, index, disabled, isCreating = false, onSelect }: CandidateCardProps) {
   const [imageFailed, setImageFailed] = useState(false);
   const preview = candidate.previewUrls[0];
 
   return (
-    <article className="candidate-card">
+    <article className={`candidate-card ${isCreating ? 'is-creating' : ''}`} aria-busy={isCreating || undefined}>
       <div className="candidate-image-wrap">
         {preview && !imageFailed ? (
           // A URL passa pela allowlist da API local; não usamos o otimizador remoto do Next.
@@ -31,14 +32,15 @@ export function CandidateCard({ candidate, index, disabled, onSelect }: Candidat
             <span>Opção {index + 1}</span>
           </div>
         )}
-        <span className="candidate-number">{String(index + 1).padStart(2, '0')}</span>
+        <span className="candidate-number">Opção {String(index + 1).padStart(2, '0')}</span>
       </div>
       <div className="candidate-actions">
         {candidate.canvaPreviewUrl ? (
           <a href={candidate.canvaPreviewUrl} target="_blank" rel="noreferrer">Ver maior ↗</a>
         ) : <span />}
         <button type="button" disabled={disabled} onClick={() => onSelect(candidate.candidateId)}>
-          Usar este design
+          {isCreating ? <span className="mini-spinner" aria-hidden="true" /> : null}
+          {isCreating ? 'Criando design' : 'Usar este design'}
         </button>
       </div>
     </article>
